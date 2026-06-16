@@ -1,0 +1,572 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conway's Game of Life</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #111;
+    color: #eee;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    padding: 20px;
+  }
+  h1 {
+    font-weight: 300;
+    font-size: 1.6rem;
+    letter-spacing: 2px;
+    margin-bottom: 12px;
+    color: #7fdbca;
+  }
+  .controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    justify-content: center;
+    margin-bottom: 12px;
+  }
+  .controls button {
+    background: #2a2a2a;
+    border: 1px solid #444;
+    color: #ddd;
+    padding: 6px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .controls button:hover { background: #3a3a3a; border-color: #7fdbca; }
+  .controls button.active { background: #1e3a3a; border-color: #7fdbca; color: #7fdbca; }
+  .controls label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.85rem;
+    color: #aaa;
+  }
+  .controls input[type="range"] { width: 80px; accent-color: #7fdbca; }
+  .controls input[type="number"] {
+    width: 50px;
+    background: #222;
+    border: 1px solid #444;
+    color: #ddd;
+    padding: 4px 6px;
+    border-radius: 3px;
+    font-size: 0.85rem;
+  }
+  .stats {
+    display: flex;
+    gap: 24px;
+    margin-bottom: 12px;
+    font-size: 0.85rem;
+    color: #888;
+  }
+  .stats span { color: #7fdbca; }
+  .canvas-wrap {
+    border: 1px solid #333;
+    line-height: 0;
+    border-radius: 4px;
+    overflow: hidden;
+    cursor: crosshair;
+  }
+  canvas { display: block; }
+  .footer {
+    margin-top: 12px;
+    font-size: 0.75rem;
+    color: #555;
+  }
+  .pattern-select {
+    background: #2a2a2a;
+    border: 1px solid #444;
+    color: #ddd;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+  .pattern-select:hover { border-color: #7fdbca; }
+</style>
+</head>
+<body>
+
+<h1>Game of Life</h1>
+
+<div class="controls">
+  <button id="playBtn">Play</button>
+  <button id="stepBtn">Step</button>
+  <button id="clearBtn">Clear</button>
+  <button id="randomBtn">Random</button>
+  <label>Speed <input type="range" id="speedSlider" min="1" max="60" value="10"></label>
+  <label>Size <input type="number" id="sizeInput" value="40" min="10" max="200" style="width:60px"></label>
+  <button id="downloadBtn">Download</button>
+  <select class="pattern-select" id="patternSelect">
+    <option value="">— Pattern —</option>
+    <optgroup label="Still Lifes">
+      <option value="block">Block</option>
+      <option value="beehive">Beehive</option>
+      <option value="loaf">Loaf</option>
+      <option value="boat">Boat</option>
+      <option value="tub">Tub</option>
+    </optgroup>
+    <optgroup label="Oscillators">
+      <option value="blinker">Blinker (p2)</option>
+      <option value="toad">Toad (p2)</option>
+      <option value="beacon">Beacon (p2)</option>
+      <option value="pulsar">Pulsar (p3)</option>
+      <option value="figure-eight">Figure Eight (p8)</option>
+      <option value="pentadecathlon">Pentadecathlon (p15)</option>
+    </optgroup>
+    <optgroup label="Spaceships">
+      <option value="glider">Glider</option>
+      <option value="lwss">LWSS</option>
+      <option value="mwss">MWSS</option>
+      <option value="hwss">HWSS</option>
+    </optgroup>
+    <optgroup label="Methuselahs">
+      <option value="r-pentomino">R-pentomino</option>
+      <option value="diehard">Diehard</option>
+      <option value="acorn">Acorn</option>
+      <option value="switch-engine">Switch Engine</option>
+    </optgroup>
+    <optgroup label="Guns &amp; Growth">
+      <option value="glider-gun">Gosper Glider Gun</option>
+    </optgroup>
+  </select>
+</div>
+
+<div class="stats">
+  Generation: <span id="genDisplay">0</span>
+  Population: <span id="popDisplay">0</span>
+</div>
+
+<div class="canvas-wrap">
+  <canvas id="canvas"></canvas>
+</div>
+
+<div class="footer" id="statusMsg">Click cells to toggle · Drag to draw</div>
+
+<script>
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const playBtn = document.getElementById('playBtn');
+const stepBtn = document.getElementById('stepBtn');
+const clearBtn = document.getElementById('clearBtn');
+const randomBtn = document.getElementById('randomBtn');
+const speedSlider = document.getElementById('speedSlider');
+const sizeInput = document.getElementById('sizeInput');
+const genDisplay = document.getElementById('genDisplay');
+const popDisplay = document.getElementById('popDisplay');
+const patternSelect = document.getElementById('patternSelect');
+
+const CELL_SIZE = 14;
+
+let gridSize = 40;
+let grid = [];
+let next = [];
+let generation = 0;
+let running = false;
+let timer = null;
+let mouseDown = false;
+let mousePaint = 1;
+let pendingPattern = null;
+let hoverPos = null;
+
+function initGrid() {
+  grid = Array.from({ length: gridSize }, () => Array(gridSize).fill(0));
+  next = Array.from({ length: gridSize }, () => Array(gridSize).fill(0));
+  generation = 0;
+}
+
+function resizeCanvas() {
+  canvas.width = gridSize * CELL_SIZE;
+  canvas.height = gridSize * CELL_SIZE;
+}
+
+function countNeighbors(g, x, y) {
+  let n = 0;
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue;
+      const nx = (x + dx + gridSize) % gridSize;
+      const ny = (y + dy + gridSize) % gridSize;
+      n += g[ny][nx];
+    }
+  }
+  return n;
+}
+
+function step() {
+  for (let y = 0; y < gridSize; y++) {
+    for (let x = 0; x < gridSize; x++) {
+      const n = countNeighbors(grid, x, y);
+      if (grid[y][x]) {
+        next[y][x] = (n === 2 || n === 3) ? 1 : 0;
+      } else {
+        next[y][x] = (n === 3) ? 1 : 0;
+      }
+    }
+  }
+  [grid, next] = [next, grid];
+  generation++;
+}
+
+function render() {
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  ctx.fillStyle = '#7fdbca';
+  for (let y = 0; y < gridSize; y++) {
+    for (let x = 0; x < gridSize; x++) {
+      if (grid[y][x]) {
+        ctx.fillRect(x * CELL_SIZE + 1, y * CELL_SIZE + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+      }
+    }
+  }
+
+  // ghost preview for pattern placement
+  if (pendingPattern && hoverPos) {
+    const pat = PATTERNS[pendingPattern];
+    if (pat) {
+      const ox = hoverPos.x - Math.floor(pat[0].length / 2);
+      const oy = hoverPos.y - Math.floor(pat.length / 2);
+      ctx.fillStyle = 'rgba(127, 219, 202, 0.35)';
+      for (let y = 0; y < pat.length; y++) {
+        for (let x = 0; x < pat[0].length; x++) {
+          if (pat[y][x]) {
+            const px = ((ox + x) % gridSize + gridSize) % gridSize;
+            const py = ((oy + y) % gridSize + gridSize) % gridSize;
+            ctx.fillRect(px * CELL_SIZE + 1, py * CELL_SIZE + 1, CELL_SIZE - 2, CELL_SIZE - 2);
+          }
+        }
+      }
+    }
+  }
+
+  let pop = 0;
+  for (let y = 0; y < gridSize; y++)
+    for (let x = 0; x < gridSize; x++)
+      pop += grid[y][x];
+  genDisplay.textContent = generation;
+  popDisplay.textContent = pop;
+}
+
+function tick() {
+  step();
+  render();
+}
+
+function toggleCell(x, y) {
+  if (x < 0 || x >= gridSize || y < 0 || y >= gridSize) return;
+  grid[y][x] = mousePaint;
+  render();
+}
+
+function getGridPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  const x = Math.floor((e.clientX - rect.left) / CELL_SIZE);
+  const y = Math.floor((e.clientY - rect.top) / CELL_SIZE);
+  return { x, y };
+}
+
+function placePendingPattern(cx, cy) {
+  if (!pendingPattern) return;
+  const pattern = PATTERNS[pendingPattern];
+  if (!pattern) return;
+  const ox = cx - Math.floor(pattern[0].length / 2);
+  const oy = cy - Math.floor(pattern.length / 2);
+  placePattern(pattern, ox, oy);
+  pendingPattern = null;
+  hoverPos = null;
+  canvas.style.cursor = 'crosshair';
+  generation = 0;
+  render();
+  updateStatus();
+}
+
+canvas.addEventListener('mousedown', e => {
+  const p = getGridPos(e);
+  if (p.x < 0 || p.x >= gridSize || p.y < 0 || p.y >= gridSize) return;
+  if (pendingPattern) {
+    placePendingPattern(p.x, p.y);
+    return;
+  }
+  mouseDown = true;
+  mousePaint = grid[p.y][p.x] ? 0 : 1;
+  toggleCell(p.x, p.y);
+});
+canvas.addEventListener('mousemove', e => {
+  const p = getGridPos(e);
+  if (pendingPattern) {
+    hoverPos = p;
+    render();
+    return;
+  }
+  if (!mouseDown) return;
+  toggleCell(p.x, p.y);
+});
+canvas.addEventListener('mouseup', () => { mouseDown = false; });
+canvas.addEventListener('mouseleave', () => {
+  mouseDown = false;
+  if (pendingPattern) {
+    hoverPos = null;
+    render();
+  }
+});
+
+canvas.addEventListener('dragstart', e => e.preventDefault());
+
+// touch support
+canvas.addEventListener('touchstart', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  const p = getGridPos(t);
+  if (p.x < 0 || p.x >= gridSize || p.y < 0 || p.y >= gridSize) return;
+  if (pendingPattern) {
+    placePendingPattern(p.x, p.y);
+    return;
+  }
+  mousePaint = grid[p.y][p.x] ? 0 : 1;
+  toggleCell(p.x, p.y);
+}, { passive: false });
+canvas.addEventListener('touchmove', e => {
+  e.preventDefault();
+  const t = e.touches[0];
+  const p = getGridPos(t);
+  toggleCell(p.x, p.y);
+}, { passive: false });
+canvas.addEventListener('touchend', e => e.preventDefault());
+
+playBtn.addEventListener('click', () => {
+  running = !running;
+  playBtn.textContent = running ? 'Pause' : 'Play';
+  playBtn.classList.toggle('active', running);
+  if (running) {
+    const delay = Math.round(1000 / parseInt(speedSlider.value));
+    timer = setInterval(tick, delay);
+  } else {
+    clearInterval(timer);
+    timer = null;
+  }
+});
+
+stepBtn.addEventListener('click', () => {
+  if (running) { playBtn.click(); }
+  tick();
+});
+
+clearBtn.addEventListener('click', () => {
+  if (running) playBtn.click();
+  initGrid();
+  render();
+});
+
+randomBtn.addEventListener('click', () => {
+  if (running) playBtn.click();
+  for (let y = 0; y < gridSize; y++)
+    for (let x = 0; x < gridSize; x++)
+      grid[y][x] = Math.random() < 0.25 ? 1 : 0;
+  generation = 0;
+  render();
+});
+
+speedSlider.addEventListener('input', () => {
+  if (running) {
+    clearInterval(timer);
+    const delay = Math.round(1000 / parseInt(speedSlider.value));
+    timer = setInterval(tick, delay);
+  }
+});
+
+sizeInput.addEventListener('change', () => {
+  const val = parseInt(sizeInput.value);
+  if (isNaN(val) || val < 10) { sizeInput.value = 10; gridSize = 10; }
+  else if (val > 200) { sizeInput.value = 200; gridSize = 200; }
+  else { gridSize = val; }
+  if (running) playBtn.click();
+  initGrid();
+  resizeCanvas();
+  render();
+});
+
+// Patterns
+const PATTERNS = {
+  glider: [[0,1,0],[0,0,1],[1,1,1]],
+  blinker: [[1,1,1]],
+  block: [[1,1],[1,1]],
+  beacon: [[1,1,0,0],[1,1,0,0],[0,0,1,1],[0,0,1,1]],
+  toad: [[0,1,1,1],[1,1,1,0]],
+  pulsar: (() => {
+    const p = Array.from({ length: 17 }, () => Array(17).fill(0));
+    const rows = [2, 7, 9, 14];
+    for (const r of rows) { p[r][4]=1; p[r][5]=1; p[r][6]=1; p[r][10]=1; p[r][11]=1; p[r][12]=1; }
+    for (const r of [4,5,6,10,11,12]) { p[2][r]=1; p[7][r]=1; p[9][r]=1; p[14][r]=1; }
+    return p;
+  })(),
+  'glider-gun': (() => {
+    const g = Array.from({ length: 11 }, () => Array(38).fill(0));
+    const pts = [
+      [0,24],[1,22],[1,24],[2,12],[2,13],[2,20],[2,21],[2,34],[2,35],
+      [3,11],[3,15],[3,20],[3,21],[3,34],[3,35],
+      [4,0],[4,1],[4,10],[4,16],[4,20],[4,21],
+      [5,0],[5,1],[5,10],[5,14],[5,16],[5,17],[5,22],[5,24],
+      [6,10],[6,16],[6,24],
+      [7,11],[7,15],
+      [8,12],[8,13]
+    ];
+    for (const [y,x] of pts) g[y][x] = 1;
+    return g;
+  })(),
+  diehard: [
+    [0,0,0,0,0,0,1,0],
+    [1,1,0,0,0,0,0,0],
+    [0,1,0,0,0,1,1,1]
+  ],
+  acorn: [
+    [0,1,0,0,0,0,0],
+    [0,0,0,1,0,0,0],
+    [1,1,0,0,1,1,1]
+  ],
+  'r-pentomino': [[0,1,1],[1,1,0],[0,1,0]],
+  pentadecathlon: [[0,0,1,0,0,0,0,1,0,0],[1,1,0,1,1,1,1,0,1,1],[0,0,1,0,0,0,0,1,0,0]],
+  lwss: [[0,1,0,0,1],[1,0,0,0,0],[1,0,0,0,1],[1,1,1,1,0]],
+  mwss: [[0,0,0,1,0,0],[0,1,0,0,0,1],[1,0,0,0,0,0],[1,0,0,0,0,1],[1,1,1,1,1,0]],
+  hwss: [[0,0,0,1,1,0,0],[0,1,0,0,0,0,1],[1,0,0,0,0,0,0],[1,0,0,0,0,0,1],[1,1,1,1,1,1,0]],
+  beehive: [[0,1,1,0],[1,0,0,1],[0,1,1,0]],
+  loaf: [[0,1,1,0],[1,0,0,1],[0,1,0,1],[0,0,1,0]],
+  boat: [[1,1,0],[1,0,1],[0,1,0]],
+  tub: [[0,1,0],[1,0,1],[0,1,0]],
+  'figure-eight': [[1,1,0,0,0,0],[1,1,0,1,0,0],[0,0,0,0,1,0],[0,1,0,0,0,0],[0,0,1,0,1,1],[0,0,0,0,1,1]],
+  'switch-engine': [[0,1,0,1,0,0],[1,0,0,0,0,0],[0,1,0,0,1,0],[0,0,0,1,1,1]]
+};
+
+function placePattern(pattern, cx, cy) {
+  for (let y = 0; y < pattern.length; y++) {
+    for (let x = 0; x < pattern[0].length; x++) {
+      const px = (cx + x) % gridSize;
+      const py = (cy + y) % gridSize;
+      grid[py][px] = pattern[y][x];
+    }
+  }
+}
+
+function updateStatus() {
+  const el = document.getElementById('statusMsg');
+  if (pendingPattern) {
+    el.textContent = 'Click on the grid to place the pattern';
+    el.style.color = '#7fdbca';
+  } else {
+    el.textContent = 'Click cells to toggle · Drag to draw';
+    el.style.color = '#555';
+  }
+}
+
+patternSelect.addEventListener('change', () => {
+  const key = patternSelect.value;
+  if (!key) return;
+  const pattern = PATTERNS[key];
+  if (!pattern) return;
+  if (running) playBtn.click();
+  pendingPattern = key;
+  patternSelect.value = '';
+  canvas.style.cursor = 'copy';
+  updateStatus();
+  render();
+});
+
+// keyboard shortcuts
+document.addEventListener('keydown', e => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.key === ' ') { e.preventDefault(); playBtn.click(); }
+  if (e.key === 's' || e.key === 'S') stepBtn.click();
+  if (e.key === 'c' || e.key === 'C') clearBtn.click();
+  if (e.key === 'r' || e.key === 'R') randomBtn.click();
+  if (e.key === 'Escape' && pendingPattern) {
+    pendingPattern = null;
+    hoverPos = null;
+    canvas.style.cursor = 'crosshair';
+    updateStatus();
+    render();
+  }
+});
+
+function getBoundingBox() {
+  let minX = gridSize, minY = gridSize, maxX = 0, maxY = 0;
+  let hasLive = false;
+  for (let y = 0; y < gridSize; y++) {
+    for (let x = 0; x < gridSize; x++) {
+      if (grid[y][x]) {
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+        hasLive = true;
+      }
+    }
+  }
+  return hasLive ? { minX, minY, maxX, maxY } : null;
+}
+
+function exportRLE() {
+  const bb = getBoundingBox();
+  if (!bb) { return null; }
+  const w = bb.maxX - bb.minX + 1;
+  const h = bb.maxY - bb.minY + 1;
+  const rows = [];
+  for (let y = bb.minY; y <= bb.maxY; y++) {
+    let row = '';
+    let run = 0;
+    let lastEnd = -1;
+    for (let x = bb.minX; x <= bb.maxX; x++) {
+      if (grid[y][x]) { lastEnd = x; }
+    }
+    let prev = -1, count = 0;
+    for (let x = bb.minX; x <= lastEnd; x++) {
+      const cell = grid[y][x];
+      if (cell !== prev) {
+        if (prev !== -1) {
+          row += (count > 1 ? count : '') + (prev ? 'o' : 'b');
+        }
+        prev = cell;
+        count = 1;
+      } else {
+        count++;
+      }
+    }
+    if (prev !== -1) {
+      row += (count > 1 ? count : '') + (prev ? 'o' : 'b');
+    }
+    rows.push(row);
+  }
+  const data = rows.join('$') + '!';
+  // wrap long lines
+  let lines = [], line = '';
+  for (let i = 0; i < data.length; i++) {
+    line += data[i];
+    if (line.length >= 70 && data[i] === '$') {
+      lines.push(line);
+      line = '';
+    }
+  }
+  if (line) lines.push(line);
+  return `x = ${w}, y = ${h}, rule = B3/S23\n${lines.join('\n')}`;
+}
+
+document.getElementById('downloadBtn').addEventListener('click', () => {
+  const html = '<!DOCTYPE html>\n' + document.documentElement.outerHTML;
+  const blob = new Blob([html], { type: 'text/html' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'game-of-life.html';
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+
+initGrid();
+resizeCanvas();
+render();
+</script>
+</body>
+</html>
